@@ -327,61 +327,66 @@ def create_distribution_charts(bond_name=None):
     return short_term_fig, long_term_fig
 
 def create_dashboard():
+    # Fetch initial data for all countries at once
+    initial_data = get_all_country_data()
+    
     return html.Div([
         # Main content wrapper with flex
         html.Div([
-            # Store for selected bond
             dcc.Store(id='selected-bond', data=None),
-            
-            # Content container (tables and chart)
             html.Div([
                 # Tables container
                 html.Div([
                     # First row of tables
                     html.Div([
-                        create_sovereign_basis_table("COLOM", colombia_data),
-                        create_sovereign_basis_table("BRAZIL", brazil_data),
-                        create_sovereign_basis_table("MEXICO", mexico_data),
-                        create_sovereign_basis_table("CHILE", chile_data),
+                        create_sovereign_basis_table("COLOMBIA", initial_data["COLOMBIA"]),
+                        create_sovereign_basis_table("BRAZIL", initial_data["BRAZIL"]),
+                        create_sovereign_basis_table("MEXICO", initial_data["MEXICO"]),
+                        create_sovereign_basis_table("CHILE", initial_data["CHILE"]),
                     ], className="grid grid-cols-4 gap-4 mb-0", id='first-row-tables'),
                     
                     # Second row of tables
                     html.Div([
-                        create_sovereign_basis_table("PERU", peru_data),
-                        create_sovereign_basis_table("PANAMA", panama_data),
-                        create_sovereign_basis_table("DOMREP", domrep_data),
+                        create_sovereign_basis_table("PERU", initial_data["PERU"]),
+                        create_sovereign_basis_table("PANAMA", initial_data["PANAMA"]),
+                        create_sovereign_basis_table("DOMREP", initial_data["DOMREP"]),
                         html.Div(className="bg-transparent")
                     ], className="grid grid-cols-4 gap-4 mb-6", id='second-row-tables'),
                 ], className="px-6"),
                 
-                # Charts container
-                html.Div([
-                    # Main chart
-                    html.Div([
-                        html.H2(id="chart-title", className="text-xl font-bold text-white mb-4"),
-                        dcc.Graph(id='basis-chart', className="h-96")
-                    ], className="bg-gray-800 p-4 rounded-lg mb-4"),
-                    
-                    # Distribution charts
-                    html.Div([
-                        html.H2("Normal Distributions", className="text-xl font-bold text-white mb-4"),
+                # Charts container with Loading wrapper
+                dcc.Loading(
+                    id="loading-charts",
+                    type="circle",  # or "default", "cube", "dot"
+                    color="#60A5FA",  # Blue color matching your theme
+                    children=html.Div([
+                        # Main chart
                         html.Div([
-                            # Short-term distributions
+                            html.H2(id="chart-title", className="text-xl font-bold text-white mb-4"),
+                            dcc.Graph(id='basis-chart', className="h-96")
+                        ], className="bg-gray-800 p-4 rounded-lg mb-4"),
+                        
+                        # Distribution charts
+                        html.Div([
+                            html.H2("Normal Distributions", className="text-xl font-bold text-white mb-4"),
                             html.Div([
-                                html.H3("Short-term Distributions (30-90 days)", 
-                                      className="text-lg font-bold text-white mb-2"),
-                                dcc.Graph(id='short-term-dist', className="h-64")
-                            ], className="flex-1"),
-                            
-                            # Long-term distributions
-                            html.Div([
-                                html.H3("Long-term Distributions (180-720 days)", 
-                                      className="text-lg font-bold text-white mb-2"),
-                                dcc.Graph(id='long-term-dist', className="h-64")
-                            ], className="flex-1"),
-                        ], className="flex gap-4"),
-                    ], className="bg-gray-800 p-4 rounded-lg")
-                ], className="px-6 mb-6", id="chart-container", style={'display': 'none'}),
+                                # Short-term distributions
+                                html.Div([
+                                    html.H3("Short-term Distributions (30-90 days)", 
+                                          className="text-lg font-bold text-white mb-2"),
+                                    dcc.Graph(id='short-term-dist', className="h-64")
+                                ], className="flex-1"),
+                                
+                                # Long-term distributions
+                                html.Div([
+                                    html.H3("Long-term Distributions (180-720 days)", 
+                                          className="text-lg font-bold text-white mb-2"),
+                                    dcc.Graph(id='long-term-dist', className="h-64")
+                                ], className="flex-1"),
+                            ], className="flex gap-4"),
+                        ], className="bg-gray-800 p-4 rounded-lg")
+                    ], className="px-6 mb-6", id="chart-container", style={'display': 'none'})
+                ),
             ], className="flex-grow"),
             
             # Footer - will stay at bottom
