@@ -1,0 +1,32 @@
+/* Style the loading spinner */
+._dash-loading-callback {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    background-color: rgba(0, 0, 0, 0.5) !important;
+    border-radius: 8px !important;
+    padding: 20px !important;
+    z-index: 1000 !important;
+}
+
+/* Style the loading spinner animation */
+._dash-loading-callback::after {
+    content: '' !important;
+    display: block !important;
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 50% !important;
+    border: 3px solid #60A5FA !important;
+    border-color: #60A5FA transparent #60A5FA transparent !important;
+    animation: spinner 1.2s linear infinite !important;
+}
+
+@keyframes spinner {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
