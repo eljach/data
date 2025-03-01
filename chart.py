@@ -1,14 +1,16 @@
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-def plot_mids_with_dispersion(results_df):
+def plot_yields_with_spread(dates, series1, series2, spread, series1_name='5Y', series2_name='10Y'):
     """
     Create a plotly figure with two subplots:
-    1. Line chart of average mids with highest/lowest range
-    2. Bar chart showing mid dispersion
+    1. Dual-axis line chart of two yield series
+    2. Line chart showing spread between yields
     
     Parameters:
-    results_df (pd.DataFrame): DataFrame with columns [average_mid, highest_mid, lowest_mid, mid_spread]
+    dates (pd.DatetimeIndex): Common dates for all series
+    series1 (pd.Series): First yield series
+    series2 (pd.Series): Second yield series
+    spread (pd.Series): Spread between yields
+    series1_name (str): Name for first series
+    series2_name (str): Name for second series
     
     Returns:
     go.Figure: Plotly figure object
@@ -16,66 +18,58 @@ def plot_mids_with_dispersion(results_df):
     # Create figure with secondary y-axis
     fig = make_subplots(
         rows=2, cols=1,
-        row_heights=[0.7, 0.3],  # 70% for mids, 30% for dispersion
-        vertical_spacing=0.1,     # Space between subplots
-        shared_xaxes=True        # Share x-axis (datetime)
+        row_heights=[0.7, 0.3],
+        vertical_spacing=0.1,
+        shared_xaxes=True,
+        specs=[[{"secondary_y": True}],
+               [{"secondary_y": False}]]
     )
     
-    # Add mid price line with markers
+    # Add first yield series on primary y-axis
     fig.add_trace(
         go.Scatter(
-            x=results_df.index,
-            y=results_df['average_mid'],
+            x=dates,
+            y=series1,
             mode='lines+markers',
-            name='Average Mid',
+            name=series1_name,
             line=dict(color='blue'),
             showlegend=True
         ),
-        row=1, col=1
+        row=1, col=1,
+        secondary_y=False
     )
     
-    # Add highest/lowest range as a shaded area
+    # Add second yield series on secondary y-axis
     fig.add_trace(
         go.Scatter(
-            x=results_df.index,
-            y=results_df['highest_mid'],
-            mode='lines',
-            line=dict(width=0),
-            showlegend=False
-        ),
-        row=1, col=1
-    )
-    
-    fig.add_trace(
-        go.Scatter(
-            x=results_df.index,
-            y=results_df['lowest_mid'],
-            mode='lines',
-            line=dict(width=0),
-            fill='tonexty',
-            fillcolor='rgba(0, 0, 255, 0.1)',
-            name='Price Range',
+            x=dates,
+            y=series2,
+            mode='lines+markers',
+            name=series2_name,
+            line=dict(color='red'),
             showlegend=True
         ),
-        row=1, col=1
+        row=1, col=1,
+        secondary_y=True
     )
     
-    # Add dispersion bars
+    # Add spread as a line chart
     fig.add_trace(
-        go.Bar(
-            x=results_df.index,
-            y=results_df['mid_spread'],
-            name='Mid Dispersion',
-            marker_color='rgb(158,202,225)',
-            opacity=0.6
+        go.Scatter(
+            x=dates,
+            y=spread,
+            mode='lines+markers',
+            name='Spread',
+            line=dict(color='green'),
+            showlegend=True
         ),
         row=2, col=1
     )
     
     # Update layout
     fig.update_layout(
-        title='Mid Prices and Dispersion Over Time',
-        height=800,  # Increase overall height
+        title=f'{series1_name} vs {series2_name} Yields and Spread',
+        height=800,
         showlegend=True,
         legend=dict(
             yanchor="top",
@@ -86,20 +80,28 @@ def plot_mids_with_dispersion(results_df):
     )
     
     # Update y-axes labels
-    fig.update_yaxes(title_text="Mid Price", row=1, col=1)
-    fig.update_yaxes(title_text="Dispersion", row=2, col=1)
+    fig.update_yaxes(
+        title_text=f"{series1_name} Yield",
+        color="blue",
+        row=1,
+        col=1,
+        secondary_y=False
+    )
+    fig.update_yaxes(
+        title_text=f"{series2_name} Yield",
+        color="red",
+        row=1,
+        col=1,
+        secondary_y=True
+    )
+    fig.update_yaxes(
+        title_text="Spread (bps)",
+        color="green",
+        row=2,
+        col=1
+    )
     
     # Update x-axis
     fig.update_xaxes(title_text="Date", row=2, col=1)
     
     return fig
-
-# Example usage:
-"""
-# Assuming your results dataframe is called 'results_df'
-fig = plot_mids_with_dispersion(results_df)
-fig.show()
-
-# To save the plot as HTML:
-# fig.write_html("mids_dispersion.html")
-"""
