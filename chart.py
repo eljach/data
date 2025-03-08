@@ -1,107 +1,95 @@
-def plot_yields_with_spread(dates, series1, series2, spread, series1_name='5Y', series2_name='10Y'):
-    """
-    Create a plotly figure with two subplots:
-    1. Dual-axis line chart of two yield series
-    2. Line chart showing spread between yields
+import pandas as pd
+import os
+from datetime import datetime
+from pathlib import Path
+
+class BloombergDataCache:
+    def __init__(self, cache_dir="data_cache"):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
     
-    Parameters:
-    dates (pd.DatetimeIndex): Common dates for all series
-    series1 (pd.Series): First yield series
-    series2 (pd.Series): Second yield series
-    spread (pd.Series): Spread between yields
-    series1_name (str): Name for first series
-    series2_name (str): Name for second series
+    def _get_cache_path(self, ticker):
+        """Generate a standardized cache file path for a given ticker"""
+        return self.cache_dir / f"{ticker.replace('/', '_')}_data.csv"
     
-    Returns:
-    go.Figure: Plotly figure object
-    """
-    # Create figure with secondary y-axis
-    fig = make_subplots(
-        rows=2, cols=1,
-        row_heights=[0.7, 0.3],
-        vertical_spacing=0.1,
-        shared_xaxes=True,
-        specs=[[{"secondary_y": True}],
-               [{"secondary_y": False}]]
-    )
+    def _load_cached_data(self, ticker):
+        """Load existing data from cache if available"""
+        cache_path = self._get_cache_path(ticker)
+        if cache_path.exists():
+            df = pd.read_csv(cache_path, parse_dates=['date'])
+            df.set_index('date', inplace=True)
+            return df
+        return None
     
-    # Add first yield series on primary y-axis
-    fig.add_trace(
-        go.Scatter(
-            x=dates,
-            y=series1,
-            mode='lines+markers',
-            name=series1_name,
-            line=dict(color='blue'),
-            showlegend=True
-        ),
-        row=1, col=1,
-        secondary_y=False
-    )
+    def _save_to_cache(self, ticker, data):
+        """Save data to cache file"""
+        cache_path = self._get_cache_path(ticker)
+        data.to_csv(cache_path)
     
-    # Add second yield series on secondary y-axis
-    fig.add_trace(
-        go.Scatter(
-            x=dates,
-            y=series2,
-            mode='lines+markers',
-            name=series2_name,
-            line=dict(color='red'),
-            showlegend=True
-        ),
-        row=1, col=1,
-        secondary_y=True
-    )
-    
-    # Add spread as a line chart
-    fig.add_trace(
-        go.Scatter(
-            x=dates,
-            y=spread,
-            mode='lines+markers',
-            name='Spread',
-            line=dict(color='green'),
-            showlegend=True
-        ),
-        row=2, col=1
-    )
-    
-    # Update layout
-    fig.update_layout(
-        title=f'{series1_name} vs {series2_name} Yields and Spread',
-        height=800,
-        showlegend=True,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01
-        )
-    )
-    
-    # Update y-axes labels
-    fig.update_yaxes(
-        title_text=f"{series1_name} Yield",
-        color="blue",
-        row=1,
-        col=1,
-        secondary_y=False
-    )
-    fig.update_yaxes(
-        title_text=f"{series2_name} Yield",
-        color="red",
-        row=1,
-        col=1,
-        secondary_y=True
-    )
-    fig.update_yaxes(
-        title_text="Spread (bps)",
-        color="green",
-        row=2,
-        col=1
-    )
-    
-    # Update x-axis
-    fig.update_xaxes(title_text="Date", row=2, col=1)
-    
-    return fig
+    def get_timeseries(self, bloomberg_client, ticker, start_date, end_date):
+        """
+        Get timeseries data for a ticker, using cache when available and
+        fetching missing data from Bloomberg when necessary
+        """
+        # Convert dates to datetime if they're strings
+        start_date = pd.to_datetime(start_date)
+        end_date = pd.to_datetime(end_date)
+        
+        # Load cached data if available
+        cached_data = self._load_cached_data(ticker)
+        
+        if cached_data is not None:
+            # Check if we need to fetch any missing data
+            missing_ranges = []
+            
+            # Check if we need data before the cached range
+            if start_date < cached_data.index.min():
+                missing_ranges.append((start_date, cached_data.index.min()))
+            
+            # Check if we need data after the cached range
+            if end_date > cached_data.index.max():
+                missing_ranges.append((cached_data.index.max(), end_date))
+            
+            # If we have missing ranges, fetch them from Bloomberg
+            if missing_ranges:
+                new_data_frames = []
+                for missing_start, missing_end in missing_ranges:
+                    # Fetch missing data from Bloomberg
+                    new_data = bloomberg_client.get_timeseries(
+                        ticker, 
+                        missing_start, 
+                        missing_end
+                    )
+                    if new_data is not None:
+                        new_data_frames.append(new_data)
+                
+                # Combine cached data with new data
+                if new_data_frames:
+                    all_data = pd.concat([cached_data] + new_data_frames)
+                    all_data = all_data.sort_index().drop_duplicates()
+                    # Save updated data to cache
+                    self._save_to_cache(ticker, all_data)
+                else:
+                    all_data = cached_data
+            else:
+                all_data = cached_data
+        else:
+            # No cached data exists, fetch everything from Bloomberg
+            all_data = bloomberg_client.get_timeseries(ticker, start_date, end_date)
+            if all_data is not None:
+                self._save_to_cache(ticker, all_data)
+        
+        # Return only the requested date range
+        return all_data.loc[start_date:end_date]
+
+
+cache = BloombergDataCache(cache_dir="bloomberg_cache")
+bloomberg_client = YourBloombergClient()  # Your existing client
+
+# Get data (will use cache when available)
+data = cache.get_timeseries(
+    bloomberg_client,
+    ticker="AAPL US Equity",
+    start_date="2020-01-01",
+    end_date="2023-12-31"
+)
