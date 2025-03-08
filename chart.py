@@ -10,10 +10,8 @@ class BloombergDataCache:
     
     def _get_cache_path(self, ticker, field):
         """Generate a standardized cache file path for a given ticker and field"""
-        # Create a subdirectory for the ticker to group all its fields
         ticker_dir = self.cache_dir / ticker.replace('/', '_')
         ticker_dir.mkdir(exist_ok=True)
-        # Store each field in a separate file
         return ticker_dir / f"{field.lower().replace(' ', '_')}.csv"
     
     def _load_cached_data(self, ticker, field):
@@ -23,12 +21,34 @@ class BloombergDataCache:
             df = pd.read_csv(cache_path, parse_dates=['date'])
             df.set_index('date', inplace=True)
             return df
-        return None
     
     def _save_to_cache(self, ticker, field, data):
         """Save data to cache file"""
+        # Ensure data has a name before saving
+        if isinstance(data, pd.Series):
+            data.name = field
         cache_path = self._get_cache_path(ticker, field)
         data.to_csv(cache_path)
+    
+    def _combine_and_format_data(self, data_dict, start_date, end_date):
+        """
+        Combine multiple fields into a single DataFrame and ensure proper formatting
+        """
+        if not data_dict:
+            return pd.DataFrame()
+        
+        # Combine all fields into a single DataFrame
+        df = pd.concat(data_dict.values(), axis=1)
+        
+        # Rename columns to match fields
+        df.columns = data_dict.keys()
+        
+        # Ensure index is datetime
+        df.index = pd.to_datetime(df.index)
+        
+        # Sort index and select date range
+        df = df.sort_index()
+        return df.loc[start_date:end_date]
     
     def get_timeseries(self, bloomberg_client, ticker, fields, start_date, end_date):
         """
@@ -49,7 +69,7 @@ class BloombergDataCache:
         
         Returns:
         --------
-        dict : Dictionary of DataFrames, keyed by field
+        pandas.DataFrame : DataFrame with datetime index and columns for each field
         """
         # Convert fields to list if it's a single string
         if isinstance(fields, str):
@@ -85,7 +105,7 @@ class BloombergDataCache:
                     }
                 else:
                     # If no missing ranges, we can use cached data directly
-                    result_data[field] = cached_data.loc[start_date:end_date]
+                    result_data[field] = cached_data
             else:
                 # No cached data exists, need to fetch everything
                 fields_to_fetch.append(field)
@@ -101,8 +121,12 @@ class BloombergDataCache:
             if new_data is not None:
                 for field in fields_to_fetch:
                     if field in new_data:
-                        self._save_to_cache(ticker, field, new_data[field])
-                        result_data[field] = new_data[field]
+                        field_data = new_data[field]
+                        # Ensure the data has a name
+                        if isinstance(field_data, pd.Series):
+                            field_data.name = field
+                        self._save_to_cache(ticker, field, field_data)
+                        result_data[field] = field_data
         
         # Fetch missing ranges for partially cached fields
         for field, missing_info in missing_ranges_by_field.items():
@@ -118,16 +142,19 @@ class BloombergDataCache:
                     missing_end
                 )
                 if range_data is not None and field in range_data:
-                    new_data_frames.append(range_data[field])
+                    field_data = range_data[field]
+                    if isinstance(field_data, pd.Series):
+                        field_data.name = field
+                    new_data_frames.append(field_data)
             
             if new_data_frames:
                 # Combine cached data with new data
                 all_data = pd.concat([cached_data] + new_data_frames)
                 all_data = all_data.sort_index().drop_duplicates()
-                # Save updated data to cache
                 self._save_to_cache(ticker, field, all_data)
-                result_data[field] = all_data.loc[start_date:end_date]
+                result_data[field] = all_data
             else:
-                result_data[field] = cached_data.loc[start_date:end_date]
+                result_data[field] = cached_data
         
-        return result_data
+        # Combine all fields into a single DataFrame with proper formatting
+        return self._combine_and_format_data(result_data, start_date, end_date)
