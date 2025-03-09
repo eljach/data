@@ -59,11 +59,11 @@ class BondSpreadAnalyzer:
         """Create interactive heatmap with dropdown menu using Plotly"""
         # Define window options
         window_options = {
-            '1 Month': 30,
-            '2 Months': 60,
-            '3 Months': 90,
-            '6 Months': 180,
-            '12 Months': 360
+            '1 Month': 21,  # Approximately 21 trading days
+            '2 Months': 42,
+            '3 Months': 63,
+            '6 Months': 126,
+            '12 Months': 252
         }
         
         # Create figures for each window
@@ -71,18 +71,28 @@ class BondSpreadAnalyzer:
         for window_name, window_days in window_options.items():
             zscore_matrix = self.calculate_zscore_matrix(window_days)
             
+            # Create mask for diagonal and NaN values
+            mask = np.isnan(zscore_matrix.values)
+            
             fig = go.Heatmap(
                 z=zscore_matrix.values,
                 x=zscore_matrix.columns,
                 y=zscore_matrix.index,
-                text=np.round(zscore_matrix.values, 2),
-                texttemplate='%{text}',
-                textfont={"size": 10},
+                text=np.where(mask, '', np.round(zscore_matrix.values, 2)),
+                textfont={'size': 10},  # Corrected property name
                 hoverongaps=False,
                 colorscale='RdBu',
                 zmid=0,
                 visible=False,
-                name=window_name
+                name=window_name,
+                zmin=-3,
+                zmax=3,
+                hovertemplate=(
+                    "Row Bond: %{y}<br>" +
+                    "Column Bond: %{x}<br>" +
+                    "Z-score: %{z:.2f}<br>" +
+                    "<extra></extra>"
+                )
             )
             figures.append(fig)
         
