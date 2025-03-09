@@ -1,153 +1,126 @@
 import pandas as pd
-import os
-from datetime import datetime
-from pathlib import Path
+import numpy as np
+import plotly.graph_objects as go
+from ipywidgets import interact, Dropdown
+import plotly.express as px
 
-class BloombergDataCache:
-    def __init__(self, cache_dir="data_cache"):
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
-    
-    def _get_cache_path(self, ticker, field):
-        """Generate a standardized cache file path for a given ticker and field"""
-        ticker_dir = self.cache_dir / ticker.replace('/', '_')
-        ticker_dir.mkdir(exist_ok=True)
-        return ticker_dir / f"{field.lower().replace(' ', '_')}.csv"
-    
-    def _load_cached_data(self, ticker, field):
-        """Load existing data from cache if available"""
-        cache_path = self._get_cache_path(ticker, field)
-        if cache_path.exists():
-            # Explicitly specify index_col=0 and parse_dates=True
-            df = pd.read_csv(
-                cache_path,
-                index_col=0,
-                parse_dates=True
+class BondSpreadAnalyzer:
+    def __init__(self, bloomberg_cache):
+        self.bloomberg_cache = bloomberg_cache
+        self.yields_df = None
+        
+    def get_bond_yields(self, bloomberg_client, bonds, start_date, end_date):
+        """Fetch YTM data for multiple bonds"""
+        yields_data = {}
+        
+        for bond in bonds:
+            df = self.bloomberg_cache.get_timeseries(
+                bloomberg_client,
+                ticker=bond,
+                fields=["YLD_YTM_BID"],
+                start_date=start_date,
+                end_date=end_date
             )
-            return df
-        return None
+            yields_data[bond] = df["YLD_YTM_BID"]
+        
+        self.yields_df = pd.DataFrame(yields_data)
+        return self.yields_df
     
-    def _save_to_cache(self, ticker, field, data):
-        """Save data to cache file"""
-        # Ensure data has a datetime index
-        if not isinstance(data.index, pd.DatetimeIndex):
-            data.index = pd.to_datetime(data.index)
-        
-        # Ensure data is a DataFrame
-        if isinstance(data, pd.Series):
-            data = data.to_frame(name=field)
-        
-        cache_path = self._get_cache_path(ticker, field)
-        # Save with datetime index
-        data.to_csv(cache_path, date_format='%Y-%m-%d')
-    
-    def _prepare_bloomberg_data(self, data, field):
-        """Prepare Bloomberg data for storage by ensuring proper format"""
-        if isinstance(data, pd.Series):
-            data = data.to_frame(name=field)
-        elif isinstance(data, pd.DataFrame):
-            if data.columns.size == 1:
-                data.columns = [field]
-        
-        # Ensure datetime index
-        if not isinstance(data.index, pd.DatetimeIndex):
-            data.index = pd.to_datetime(data.index)
-        
-        return data
-    
-    def get_timeseries(self, bloomberg_client, ticker, fields, start_date, end_date):
+    def calculate_zscore_matrix(self, window_days):
         """
-        Get timeseries data for a ticker and multiple fields, using cache when available
-        and fetching missing data from Bloomberg when necessary
+        Calculate z-score matrix for all bond pairs using rolling window
+        
+        Parameters:
+        -----------
+        window_days : int
+            Number of days for rolling window
+            
+        Returns:
+        --------
+        pandas.DataFrame : Matrix of z-scores
         """
-        # Convert fields to list if it's a single string
-        if isinstance(fields, str):
-            fields = [fields]
-        
-        # Convert dates to datetime if they're strings
-        start_date = pd.to_datetime(start_date)
-        end_date = pd.to_datetime(end_date)
-        
-        result_data = {}
-        fields_to_fetch = []
-        missing_ranges_by_field = {}
-        
-        # First, check cache for each field and identify missing data
-        for field in fields:
-            cached_data = self._load_cached_data(ticker, field)
+        if self.yields_df is None:
+            raise ValueError("No yield data available. Please run get_bond_yields first.")
             
-            if cached_data is not None:
-                missing_ranges = []
-                
-                # Check if we need data before the cached range
-                if start_date < cached_data.index.min():
-                    missing_ranges.append((start_date, cached_data.index.min()))
-                
-                # Check if we need data after the cached range
-                if end_date > cached_data.index.max():
-                    missing_ranges.append((cached_data.index.max(), end_date))
-                
-                if missing_ranges:
-                    missing_ranges_by_field[field] = {
-                        'cached_data': cached_data,
-                        'ranges': missing_ranges
-                    }
-                else:
-                    # If no missing ranges, we can use cached data directly
-                    result_data[field] = cached_data
-            else:
-                # No cached data exists, need to fetch everything
-                fields_to_fetch.append(field)
+        bonds = self.yields_df.columns
+        n_bonds = len(bonds)
+        zscore_matrix = pd.DataFrame(np.zeros((n_bonds, n_bonds)), 
+                                   index=bonds, columns=bonds)
         
-        # Fetch any completely missing fields
-        if fields_to_fetch:
-            new_data = bloomberg_client.get_timeseries(
-                ticker, 
-                fields_to_fetch,
-                start_date,
-                end_date
-            )
-            if new_data is not None:
-                for field in fields_to_fetch:
-                    if field in new_data:
-                        field_data = self._prepare_bloomberg_data(new_data[field], field)
-                        self._save_to_cache(ticker, field, field_data)
-                        result_data[field] = field_data
+        for i, bond1 in enumerate(bonds):
+            for j, bond2 in enumerate(bonds):
+                if i != j:  # Skip diagonal
+                    # Calculate spread
+                    spread = self.yields_df[bond1] - self.yields_df[bond2]
+                    
+                    # Calculate rolling statistics
+                    rolling_mean = spread.rolling(window=window_days).mean()
+                    rolling_std = spread.rolling(window=window_days).std()
+                    
+                    # Calculate z-score using most recent values
+                    current_spread = spread.iloc[-1]
+                    current_mean = rolling_mean.iloc[-1]
+                    current_std = rolling_std.iloc[-1]
+                    
+                    zscore = (current_spread - current_mean) / current_std
+                    zscore_matrix.loc[bond1, bond2] = zscore
         
-        # Fetch missing ranges for partially cached fields
-        for field, missing_info in missing_ranges_by_field.items():
-            cached_data = missing_info['cached_data']
-            new_data_frames = []
+        return zscore_matrix
+    
+    def plot_zscore_heatmap(self):
+        """Create interactive heatmap with time window selection"""
+        
+        def update_heatmap(window):
+            # Convert window selection to days
+            window_days = {
+                '1 Month': 30,
+                '2 Months': 60,
+                '3 Months': 90,
+                '6 Months': 180,
+                '12 Months': 360
+            }[window]
             
-            for missing_start, missing_end in missing_info['ranges']:
-                # Fetch missing data from Bloomberg
-                range_data = bloomberg_client.get_timeseries(
-                    ticker,
-                    [field],
-                    missing_start,
-                    missing_end
+            # Calculate z-score matrix
+            zscore_matrix = self.calculate_zscore_matrix(window_days)
+            
+            # Create heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=zscore_matrix.values,
+                x=zscore_matrix.columns,
+                y=zscore_matrix.index,
+                text=np.round(zscore_matrix.values, 2),
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                hoverongaps=False,
+                colorscale='RdBu',  # Red-White-Blue colorscale
+                zmid=0,  # Center the colorscale at 0
+                colorbar=dict(
+                    title='Z-Score',
+                    titleside='right'
                 )
-                if range_data is not None and field in range_data:
-                    field_data = self._prepare_bloomberg_data(range_data[field], field)
-                    new_data_frames.append(field_data)
+            ))
             
-            if new_data_frames:
-                # Combine cached data with new data
-                all_data = pd.concat([cached_data] + new_data_frames)
-                all_data = all_data.sort_index().drop_duplicates()
-                self._save_to_cache(ticker, field, all_data)
-                result_data[field] = all_data
-            else:
-                result_data[field] = cached_data
+            fig.update_layout(
+                title=f'Bond Yield Spread Z-Scores ({window} Rolling Window)',
+                xaxis_title='versus Bond →',
+                yaxis_title='Bond ↓',
+                width=900,
+                height=700,
+                xaxis={'side': 'top'},  # Move x-axis labels to top
+                yaxis={'autorange': 'reversed'}  # Reverse y-axis to match matrix format
+            )
+            
+            return fig
         
-        # Combine all fields into a single DataFrame
-        if not result_data:
-            return pd.DataFrame()
+        # Create dropdown widget
+        window_options = ['1 Month', '2 Months', '3 Months', '6 Months', '12 Months']
         
-        # Combine all fields and ensure proper datetime index
-        final_df = pd.concat(result_data.values(), axis=1)
-        final_df.columns = result_data.keys()
-        final_df.index = pd.to_datetime(final_df.index)
-        final_df = final_df.sort_index()
-        
-        return final_df.loc[start_date:end_date]
+        interact(
+            update_heatmap,
+            window=Dropdown(
+                options=window_options,
+                value='1 Month',
+                description='Window:',
+                style={'description_width': 'initial'}
+            )
+        )
