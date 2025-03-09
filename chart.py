@@ -79,8 +79,7 @@ class BondSpreadAnalyzer:
                 x=zscore_matrix.columns,
                 y=zscore_matrix.index,
                 text=np.where(mask, '', np.round(zscore_matrix.values, 2)),
-                textfont={'size': 10},  # Corrected property name
-                hoverongaps=False,
+                customdata=np.round(zscore_matrix.values, 2),  # For hover data
                 colorscale='RdBu',
                 zmid=0,
                 visible=False,
@@ -90,9 +89,10 @@ class BondSpreadAnalyzer:
                 hovertemplate=(
                     "Row Bond: %{y}<br>" +
                     "Column Bond: %{x}<br>" +
-                    "Z-score: %{z:.2f}<br>" +
+                    "Z-score: %{customdata:.2f}<br>" +
                     "<extra></extra>"
-                )
+                ),
+                showscale=True
             )
             figures.append(fig)
         
@@ -139,7 +139,9 @@ class BondSpreadAnalyzer:
             yaxis={'autorange': 'reversed'},
             annotations=[
                 dict(text="Select Window:", x=0, y=1.12, yref="paper", xref="paper", showarrow=False)
-            ]
+            ],
+            # Add margin to ensure labels are visible
+            margin=dict(t=150, l=100, r=50, b=50)
         )
         
         return fig
