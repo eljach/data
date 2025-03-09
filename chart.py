@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from ipywidgets import interact, Dropdown
-import plotly.express as px
+from datetime import datetime, timedelta
 
 class BondSpreadAnalyzer:
     def __init__(self, bloomberg_cache):
@@ -27,18 +26,7 @@ class BondSpreadAnalyzer:
         return self.yields_df
     
     def calculate_zscore_matrix(self, window_days):
-        """
-        Calculate z-score matrix for all bond pairs using rolling window
-        
-        Parameters:
-        -----------
-        window_days : int
-            Number of days for rolling window
-            
-        Returns:
-        --------
-        pandas.DataFrame : Matrix of z-scores
-        """
+        """Calculate z-score matrix for all bond pairs using rolling window"""
         if self.yields_df is None:
             raise ValueError("No yield data available. Please run get_bond_yields first.")
             
@@ -67,24 +55,23 @@ class BondSpreadAnalyzer:
         
         return zscore_matrix
     
-    def plot_zscore_heatmap(self):
-        """Create interactive heatmap with time window selection"""
+    def create_interactive_heatmap(self):
+        """Create interactive heatmap with dropdown menu using Plotly"""
+        # Define window options
+        window_options = {
+            '1 Month': 30,
+            '2 Months': 60,
+            '3 Months': 90,
+            '6 Months': 180,
+            '12 Months': 360
+        }
         
-        def update_heatmap(window):
-            # Convert window selection to days
-            window_days = {
-                '1 Month': 30,
-                '2 Months': 60,
-                '3 Months': 90,
-                '6 Months': 180,
-                '12 Months': 360
-            }[window]
-            
-            # Calculate z-score matrix
+        # Create figures for each window
+        figures = []
+        for window_name, window_days in window_options.items():
             zscore_matrix = self.calculate_zscore_matrix(window_days)
             
-            # Create heatmap
-            fig = go.Figure(data=go.Heatmap(
+            fig = go.Heatmap(
                 z=zscore_matrix.values,
                 x=zscore_matrix.columns,
                 y=zscore_matrix.index,
@@ -92,35 +79,57 @@ class BondSpreadAnalyzer:
                 texttemplate='%{text}',
                 textfont={"size": 10},
                 hoverongaps=False,
-                colorscale='RdBu',  # Red-White-Blue colorscale
-                zmid=0,  # Center the colorscale at 0
-                colorbar=dict(
-                    title='Z-Score',
-                    titleside='right'
-                )
-            ))
-            
-            fig.update_layout(
-                title=f'Bond Yield Spread Z-Scores ({window} Rolling Window)',
-                xaxis_title='versus Bond →',
-                yaxis_title='Bond ↓',
-                width=900,
-                height=700,
-                xaxis={'side': 'top'},  # Move x-axis labels to top
-                yaxis={'autorange': 'reversed'}  # Reverse y-axis to match matrix format
+                colorscale='RdBu',
+                zmid=0,
+                visible=False,
+                name=window_name
             )
-            
-            return fig
+            figures.append(fig)
         
-        # Create dropdown widget
-        window_options = ['1 Month', '2 Months', '3 Months', '6 Months', '12 Months']
+        # Make first figure visible
+        figures[0].visible = True
         
-        interact(
-            update_heatmap,
-            window=Dropdown(
-                options=window_options,
-                value='1 Month',
-                description='Window:',
-                style={'description_width': 'initial'}
+        # Create figure with dropdown menu
+        fig = go.Figure(data=figures)
+        
+        # Create dropdown menu
+        updatemenus = [
+            dict(
+                buttons=list([
+                    dict(
+                        args=[{"visible": [i == j for j in range(len(figures))]}],
+                        label=window_name,
+                        method="update"
+                    ) for i, window_name in enumerate(window_options.keys())
+                ]),
+                direction="down",
+                showactive=True,
+                x=0.1,
+                xanchor="left",
+                y=1.15,
+                yanchor="top"
             )
+        ]
+        
+        # Update layout
+        fig.update_layout(
+            updatemenus=updatemenus,
+            title={
+                'text': "Bond Yield Spread Z-Scores",
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top'
+            },
+            xaxis_title='versus Bond →',
+            yaxis_title='Bond ↓',
+            width=900,
+            height=700,
+            xaxis={'side': 'top'},
+            yaxis={'autorange': 'reversed'},
+            annotations=[
+                dict(text="Select Window:", x=0, y=1.12, yref="paper", xref="paper", showarrow=False)
+            ]
         )
+        
+        return fig
