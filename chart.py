@@ -18,58 +18,47 @@ class BloombergDataCache:
         """Load existing data from cache if available"""
         cache_path = self._get_cache_path(ticker, field)
         if cache_path.exists():
-            df = pd.read_csv(cache_path, parse_dates=['date'])
-            df.set_index('date', inplace=True)
+            # Explicitly specify index_col=0 and parse_dates=True
+            df = pd.read_csv(
+                cache_path,
+                index_col=0,
+                parse_dates=True
+            )
             return df
+        return None
     
     def _save_to_cache(self, ticker, field, data):
         """Save data to cache file"""
-        # Ensure data has a name before saving
+        # Ensure data has a datetime index
+        if not isinstance(data.index, pd.DatetimeIndex):
+            data.index = pd.to_datetime(data.index)
+        
+        # Ensure data is a DataFrame
         if isinstance(data, pd.Series):
-            data.name = field
+            data = data.to_frame(name=field)
+        
         cache_path = self._get_cache_path(ticker, field)
-        data.to_csv(cache_path)
+        # Save with datetime index
+        data.to_csv(cache_path, date_format='%Y-%m-%d')
     
-    def _combine_and_format_data(self, data_dict, start_date, end_date):
-        """
-        Combine multiple fields into a single DataFrame and ensure proper formatting
-        """
-        if not data_dict:
-            return pd.DataFrame()
+    def _prepare_bloomberg_data(self, data, field):
+        """Prepare Bloomberg data for storage by ensuring proper format"""
+        if isinstance(data, pd.Series):
+            data = data.to_frame(name=field)
+        elif isinstance(data, pd.DataFrame):
+            if data.columns.size == 1:
+                data.columns = [field]
         
-        # Combine all fields into a single DataFrame
-        df = pd.concat(data_dict.values(), axis=1)
+        # Ensure datetime index
+        if not isinstance(data.index, pd.DatetimeIndex):
+            data.index = pd.to_datetime(data.index)
         
-        # Rename columns to match fields
-        df.columns = data_dict.keys()
-        
-        # Ensure index is datetime
-        df.index = pd.to_datetime(df.index)
-        
-        # Sort index and select date range
-        df = df.sort_index()
-        return df.loc[start_date:end_date]
+        return data
     
     def get_timeseries(self, bloomberg_client, ticker, fields, start_date, end_date):
         """
         Get timeseries data for a ticker and multiple fields, using cache when available
         and fetching missing data from Bloomberg when necessary
-        
-        Parameters:
-        -----------
-        bloomberg_client : Your Bloomberg API client
-        ticker : str
-            The Bloomberg ticker
-        fields : str or list
-            Single field or list of fields to retrieve
-        start_date : str or datetime
-            Start date for the data
-        end_date : str or datetime
-            End date for the data
-        
-        Returns:
-        --------
-        pandas.DataFrame : DataFrame with datetime index and columns for each field
         """
         # Convert fields to list if it's a single string
         if isinstance(fields, str):
@@ -121,10 +110,7 @@ class BloombergDataCache:
             if new_data is not None:
                 for field in fields_to_fetch:
                     if field in new_data:
-                        field_data = new_data[field]
-                        # Ensure the data has a name
-                        if isinstance(field_data, pd.Series):
-                            field_data.name = field
+                        field_data = self._prepare_bloomberg_data(new_data[field], field)
                         self._save_to_cache(ticker, field, field_data)
                         result_data[field] = field_data
         
@@ -142,9 +128,7 @@ class BloombergDataCache:
                     missing_end
                 )
                 if range_data is not None and field in range_data:
-                    field_data = range_data[field]
-                    if isinstance(field_data, pd.Series):
-                        field_data.name = field
+                    field_data = self._prepare_bloomberg_data(range_data[field], field)
                     new_data_frames.append(field_data)
             
             if new_data_frames:
@@ -156,5 +140,14 @@ class BloombergDataCache:
             else:
                 result_data[field] = cached_data
         
-        # Combine all fields into a single DataFrame with proper formatting
-        return self._combine_and_format_data(result_data, start_date, end_date)
+        # Combine all fields into a single DataFrame
+        if not result_data:
+            return pd.DataFrame()
+        
+        # Combine all fields and ensure proper datetime index
+        final_df = pd.concat(result_data.values(), axis=1)
+        final_df.columns = result_data.keys()
+        final_df.index = pd.to_datetime(final_df.index)
+        final_df = final_df.sort_index()
+        
+        return final_df.loc[start_date:end_date]
