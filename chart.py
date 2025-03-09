@@ -1,147 +1,89 @@
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-
-class BondSpreadAnalyzer:
-    def __init__(self, bloomberg_cache):
-        self.bloomberg_cache = bloomberg_cache
-        self.yields_df = None
-        
-    def get_bond_yields(self, bloomberg_client, bonds, start_date, end_date):
-        """Fetch YTM data for multiple bonds"""
-        yields_data = {}
-        
-        for bond in bonds:
-            df = self.bloomberg_cache.get_timeseries(
-                bloomberg_client,
-                ticker=bond,
-                fields=["YLD_YTM_BID"],
-                start_date=start_date,
-                end_date=end_date
-            )
-            yields_data[bond] = df["YLD_YTM_BID"]
-        
-        self.yields_df = pd.DataFrame(yields_data)
-        return self.yields_df
+def get_timeseries(self, bloomberg_client, ticker, fields, start_date, end_date):
+    """
+    Get timeseries data for a ticker and fields, using cache when available
+    and fetching missing data from Bloomberg when necessary
+    """
+    # Convert dates to datetime if they're strings
+    start_date = pd.to_datetime(start_date)
+    end_date = pd.to_datetime(end_date)
     
-    def calculate_zscore_matrix(self, window_days):
-        """Calculate z-score matrix for all bond pairs using rolling window"""
-        if self.yields_df is None:
-            raise ValueError("No yield data available. Please run get_bond_yields first.")
-            
-        bonds = self.yields_df.columns
-        n_bonds = len(bonds)
-        zscore_matrix = pd.DataFrame(np.zeros((n_bonds, n_bonds)), 
-                                   index=bonds, columns=bonds)
-        
-        for i, bond1 in enumerate(bonds):
-            for j, bond2 in enumerate(bonds):
-                if i != j:  # Skip diagonal
-                    # Calculate spread
-                    spread = self.yields_df[bond1] - self.yields_df[bond2]
-                    
-                    # Calculate rolling statistics
-                    rolling_mean = spread.rolling(window=window_days).mean()
-                    rolling_std = spread.rolling(window=window_days).std()
-                    
-                    # Calculate z-score using most recent values
-                    current_spread = spread.iloc[-1]
-                    current_mean = rolling_mean.iloc[-1]
-                    current_std = rolling_std.iloc[-1]
-                    
-                    zscore = (current_spread - current_mean) / current_std
-                    zscore_matrix.loc[bond1, bond2] = zscore
-        
-        return zscore_matrix
+    result_data = {}
     
-    def create_interactive_heatmap(self):
-        """Create interactive heatmap with dropdown menu using Plotly"""
-        # Define window options
-        window_options = {
-            '1 Month': 21,  # Approximately 21 trading days
-            '2 Months': 42,
-            '3 Months': 63,
-            '6 Months': 126,
-            '12 Months': 252
-        }
+    # Handle single field case
+    if isinstance(fields, str):
+        fields = [fields]
+    
+    for field in fields:
+        # Load cached data if available
+        cached_data = self._load_cached_data(ticker, field)
         
-        # Create figures for each window
-        figures = []
-        for window_name, window_days in window_options.items():
-            zscore_matrix = self.calculate_zscore_matrix(window_days)
+        if cached_data is not None:
+            # Check if we need to fetch any missing data
+            missing_ranges = []
             
-            # Create mask for diagonal and NaN values
-            mask = np.isnan(zscore_matrix.values)
+            # Check if we need data before the cached range
+            if start_date < cached_data.index.min():
+                missing_ranges.append((start_date, cached_data.index.min() - pd.Timedelta(days=1)))
             
-            fig = go.Heatmap(
-                z=zscore_matrix.values,
-                x=zscore_matrix.columns,
-                y=zscore_matrix.index,
-                text=np.where(mask, '', np.round(zscore_matrix.values, 2)),
-                customdata=np.round(zscore_matrix.values, 2),  # For hover data
-                colorscale='RdBu',
-                zmid=0,
-                visible=False,
-                name=window_name,
-                zmin=-3,
-                zmax=3,
-                hovertemplate=(
-                    "Row Bond: %{y}<br>" +
-                    "Column Bond: %{x}<br>" +
-                    "Z-score: %{customdata:.2f}<br>" +
-                    "<extra></extra>"
-                ),
-                showscale=True
+            # Check if we need data after the cached range
+            if end_date > cached_data.index.max():
+                missing_ranges.append((cached_data.index.max() + pd.Timedelta(days=1), end_date))
+            
+            if missing_ranges:
+                new_data_pieces = [cached_data]  # Start with existing cached data
+                
+                for missing_start, missing_end in missing_ranges:
+                    # Fetch missing data from Bloomberg
+                    new_data = bloomberg_client.get_timeseries(
+                        ticker, 
+                        [field],
+                        missing_start, 
+                        missing_end
+                    )
+                    
+                    if new_data is not None and field in new_data:
+                        field_data = new_data[field]
+                        if isinstance(field_data, pd.Series):
+                            field_data = field_data.to_frame(name=field)
+                        new_data_pieces.append(field_data)
+                
+                # Combine all pieces of data
+                if len(new_data_pieces) > 1:
+                    # Concatenate all pieces and sort by date
+                    all_data = pd.concat(new_data_pieces)
+                    all_data = all_data.sort_index()
+                    # Remove any potential duplicates
+                    all_data = all_data[~all_data.index.duplicated(keep='first')]
+                    
+                    # Save the complete dataset back to cache
+                    self._save_to_cache(ticker, field, all_data)
+                    
+                    result_data[field] = all_data
+                else:
+                    result_data[field] = cached_data
+            else:
+                result_data[field] = cached_data
+        else:
+            # No cached data exists, fetch everything from Bloomberg
+            new_data = bloomberg_client.get_timeseries(
+                ticker, 
+                [field],
+                start_date, 
+                end_date
             )
-            figures.append(fig)
-        
-        # Make first figure visible
-        figures[0].visible = True
-        
-        # Create figure with dropdown menu
-        fig = go.Figure(data=figures)
-        
-        # Create dropdown menu
-        updatemenus = [
-            dict(
-                buttons=list([
-                    dict(
-                        args=[{"visible": [i == j for j in range(len(figures))]}],
-                        label=window_name,
-                        method="update"
-                    ) for i, window_name in enumerate(window_options.keys())
-                ]),
-                direction="down",
-                showactive=True,
-                x=0.1,
-                xanchor="left",
-                y=1.15,
-                yanchor="top"
-            )
-        ]
-        
-        # Update layout
-        fig.update_layout(
-            updatemenus=updatemenus,
-            title={
-                'text': "Bond Yield Spread Z-Scores",
-                'y': 0.95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top'
-            },
-            xaxis_title='versus Bond →',
-            yaxis_title='Bond ↓',
-            width=900,
-            height=700,
-            xaxis={'side': 'top'},
-            yaxis={'autorange': 'reversed'},
-            annotations=[
-                dict(text="Select Window:", x=0, y=1.12, yref="paper", xref="paper", showarrow=False)
-            ],
-            # Add margin to ensure labels are visible
-            margin=dict(t=150, l=100, r=50, b=50)
-        )
-        
-        return fig
+            
+            if new_data is not None and field in new_data:
+                field_data = new_data[field]
+                if isinstance(field_data, pd.Series):
+                    field_data = field_data.to_frame(name=field)
+                self._save_to_cache(ticker, field, field_data)
+                result_data[field] = field_data
+    
+    # Combine all fields into a single DataFrame
+    if len(result_data) > 0:
+        final_df = pd.concat(result_data.values(), axis=1)
+        final_df.columns = result_data.keys()
+        # Return only the requested date range
+        return final_df.loc[start_date:end_date]
+    else:
+        return pd.DataFrame()
