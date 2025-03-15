@@ -1,89 +1,106 @@
-def get_timeseries(self, bloomberg_client, ticker, fields, start_date, end_date):
-    """
-    Get timeseries data for a ticker and fields, using cache when available
-    and fetching missing data from Bloomberg when necessary
-    """
-    # Convert dates to datetime if they're strings
-    start_date = pd.to_datetime(start_date)
-    end_date = pd.to_datetime(end_date)
+import plotly.figure_factory as ff
+
+def create_interactive_heatmap(self):
+    """Create interactive heatmap with dropdown menu using Plotly"""
+    # Define window options
+    window_options = {
+        '1 Month': 21,  # Approximately 21 trading days
+        '2 Months': 42,
+        '3 Months': 63,
+        '6 Months': 126,
+        '12 Months': 252
+    }
     
-    result_data = {}
-    
-    # Handle single field case
-    if isinstance(fields, str):
-        fields = [fields]
-    
-    for field in fields:
-        # Load cached data if available
-        cached_data = self._load_cached_data(ticker, field)
+    # Create figures for each window
+    figures = []
+    for window_name, window_days in window_options.items():
+        zscore_matrix = self.calculate_zscore_matrix(window_days)
         
-        if cached_data is not None:
-            # Check if we need to fetch any missing data
-            missing_ranges = []
-            
-            # Check if we need data before the cached range
-            if start_date < cached_data.index.min():
-                missing_ranges.append((start_date, cached_data.index.min() - pd.Timedelta(days=1)))
-            
-            # Check if we need data after the cached range
-            if end_date > cached_data.index.max():
-                missing_ranges.append((cached_data.index.max() + pd.Timedelta(days=1), end_date))
-            
-            if missing_ranges:
-                new_data_pieces = [cached_data]  # Start with existing cached data
-                
-                for missing_start, missing_end in missing_ranges:
-                    # Fetch missing data from Bloomberg
-                    new_data = bloomberg_client.get_timeseries(
-                        ticker, 
-                        [field],
-                        missing_start, 
-                        missing_end
-                    )
-                    
-                    if new_data is not None and field in new_data:
-                        field_data = new_data[field]
-                        if isinstance(field_data, pd.Series):
-                            field_data = field_data.to_frame(name=field)
-                        new_data_pieces.append(field_data)
-                
-                # Combine all pieces of data
-                if len(new_data_pieces) > 1:
-                    # Concatenate all pieces and sort by date
-                    all_data = pd.concat(new_data_pieces)
-                    all_data = all_data.sort_index()
-                    # Remove any potential duplicates
-                    all_data = all_data[~all_data.index.duplicated(keep='first')]
-                    
-                    # Save the complete dataset back to cache
-                    self._save_to_cache(ticker, field, all_data)
-                    
-                    result_data[field] = all_data
-                else:
-                    result_data[field] = cached_data
-            else:
-                result_data[field] = cached_data
-        else:
-            # No cached data exists, fetch everything from Bloomberg
-            new_data = bloomberg_client.get_timeseries(
-                ticker, 
-                [field],
-                start_date, 
-                end_date
+        # Round values for display
+        z_values = np.round(zscore_matrix.values, 2)
+        
+        # Create text matrix
+        text = [[f'{x:.2f}' if not np.isnan(x) else '' for x in row] for row in z_values]
+        
+        # Create annotated heatmap
+        fig = ff.create_annotated_heatmap(
+            z=z_values,
+            x=list(zscore_matrix.columns),
+            y=list(zscore_matrix.index),
+            annotation_text=text,
+            colorscale='RdBu',
+            zmid=0,
+            zmin=-3,
+            zmax=3,
+            showscale=True,
+            hoverongaps=False
+        )
+        
+        # Update first figure
+        fig.update_traces(
+            visible=False,
+            hovertemplate=(
+                "Row Bond: %{y}<br>" +
+                "Column Bond: %{x}<br>" +
+                "Z-score: %{z:.2f}<br>" +
+                "<extra></extra>"
             )
-            
-            if new_data is not None and field in new_data:
-                field_data = new_data[field]
-                if isinstance(field_data, pd.Series):
-                    field_data = field_data.to_frame(name=field)
-                self._save_to_cache(ticker, field, field_data)
-                result_data[field] = field_data
+        )
+        
+        figures.append(fig)
     
-    # Combine all fields into a single DataFrame
-    if len(result_data) > 0:
-        final_df = pd.concat(result_data.values(), axis=1)
-        final_df.columns = result_data.keys()
-        # Return only the requested date range
-        return final_df.loc[start_date:end_date]
-    else:
-        return pd.DataFrame()
+    # Create base figure
+    base_fig = go.Figure()
+    
+    # Add all traces from all figures
+    for fig in figures:
+        for trace in fig.data:
+            base_fig.add_trace(trace)
+    
+    # Make first figure's traces visible
+    for i in range(len(figures[0].data)):
+        base_fig.data[i].visible = True
+    
+    # Create dropdown menu
+    updatemenus = [
+        dict(
+            buttons=[
+                dict(
+                    args=[{'visible': [True if i//2 == j else False 
+                                     for i in range(len(base_fig.data))]}],
+                    label=window_name,
+                    method="update"
+                ) for j, window_name in enumerate(window_options.keys())
+            ],
+            direction="down",
+            showactive=True,
+            x=0.1,
+            xanchor="left",
+            y=1.15,
+            yanchor="top"
+        )
+    ]
+    
+    # Update layout
+    base_fig.update_layout(
+        updatemenus=updatemenus,
+        title={
+            'text': "Bond Yield Spread Z-Scores",
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        },
+        xaxis_title='versus Bond →',
+        yaxis_title='Bond ↓',
+        width=900,
+        height=700,
+        xaxis={'side': 'top'},
+        yaxis={'autorange': 'reversed'},
+        annotations=[
+            dict(text="Select Window:", x=0, y=1.12, yref="paper", xref="paper", showarrow=False)
+        ],
+        margin=dict(t=150, l=100, r=50, b=50)
+    )
+    
+    return base_fig
