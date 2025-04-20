@@ -25,10 +25,12 @@ def combine_asw_spreads(bonds: List[str], api_client) -> pd.DataFrame:
     return combined_df
 
 def create_spread_analysis_chart(df):
-    # Calculate statistics for each bond
-    current_values = df.apply(lambda col: col.dropna().iloc[-1] if col.iloc[-1] != col.iloc[-1] else col.iloc[-1])
-    rolling_mean = df.rolling(window=60).mean().iloc[-1]  # 3-month average (assuming daily data)
-    rolling_std = df.rolling(window=60).std().iloc[-1]  # 3-month standard deviation
+    # Get the last valid values for each metric
+    current_values = df.apply(lambda col: col.dropna().iloc[-1] if pd.isna(col.iloc[-1]) else col.iloc[-1])
+    
+    # Calculate rolling statistics and get their last valid values
+    rolling_mean = df.rolling(window=60).mean().apply(lambda col: col.dropna().iloc[-1] if pd.isna(col.iloc[-1]) else col.iloc[-1])
+    rolling_std = df.rolling(window=60).std().apply(lambda col: col.dropna().iloc[-1] if pd.isna(col.iloc[-1]) else col.iloc[-1])
     
     # Create the figure
     fig = go.Figure()
@@ -84,4 +86,3 @@ def create_spread_analysis_chart(df):
 # Assuming your combined_df from the previous code
 fig = create_spread_analysis_chart(result_df)
 fig.show()
-
