@@ -1,85 +1,87 @@
-```python
 import pandas as pd
+from typing import List, Dict
 import plotly.graph_objects as go
+import numpy as np
 
-# -----------------------------------------------------------------
-# 1.  INPUT  ── df_raw: wide DataFrame with ASW time‑series
-# -----------------------------------------------------------------
-#   • Index: datetime64[ns] (daily or business‑day observations)
-#   • Columns: one column per bond (ASW spread in bp)
-# -----------------------------------------------------------------
-# df_raw = pd.read_csv("asw_levels.csv", index_col=0, parse_dates=True)
+def combine_asw_spreads(bonds: List[str], api_client) -> pd.DataFrame:
+    # Dictionary to store individual dataframes
+    all_spreads = {}
+    
+    # Loop through each bond and fetch its ASW spread
+    for bond in bonds:
+        try:
+            # Get the DataFrame from the API
+            df = api_client.get_asw_spread(bond)
+            # Store the ASW spread column, using the bond name as the column name
+            all_spreads[bond] = df['asw_spread']  # Adjust column name if different
+        except Exception as e:
+            print(f"Error fetching data for bond {bond}: {e}")
+            continue
+    
+    # Combine all series into a single DataFrame
+    # outer join to keep all dates from all bonds
+    combined_df = pd.concat(all_spreads, axis=1)
+    
+    return combined_df
 
-ROLL_DAYS = 63   # ≈ 3 calendar months of business days
-
-# ── tidy & chronologically sorted copy
-_df = df_raw.sort_index()
-
-# -----------------------------------------------------------------
-# 2.  Three‑month rolling statistics (per bond)
-# -----------------------------------------------------------------
-roll_mean = _df.rolling(ROLL_DAYS, min_periods=ROLL_DAYS).mean()
-roll_std  = _df.rolling(ROLL_DAYS, min_periods=ROLL_DAYS).std()
-
-# -----------------------------------------------------------------
-# 3.  Extract **latest** measurements for each bond
-# -----------------------------------------------------------------
-spot      = _df.iloc[-1]         # last available value (series)
-mean_3m   = roll_mean.iloc[-1]   # last 3‑m rolling mean
-std_3m    = roll_std.iloc[-1]    # last 3‑m rolling std
-
-# Keep only bonds that have a full 3‑month window (no NaNs)
-mask      = mean_3m.notna() & std_3m.notna()
-bonds     = mean_3m.index[mask]
-
-spot      = spot[bonds]
-mean_3m   = mean_3m[bonds]
-std_3m    = std_3m[bonds]
-
-# -----------------------------------------------------------------
-# 4.  Build *one* Plotly figure: x‑axis = bonds (categorical)
-# -----------------------------------------------------------------
-fig = go.Figure()
-
-# ── 3‑month average + error bars (±2σ)
-fig.add_trace(
-    go.Scatter(
-        x=bonds,
-        y=mean_3m,
-        mode="markers",
-        name="3‑month avg",
-        marker_symbol="circle",
-        marker_size=10,
+def create_spread_analysis_chart(df):
+    # Calculate statistics for each bond
+    current_values = df.apply(lambda col: col.dropna().iloc[-1] if col.iloc[-1] != col.iloc[-1] else col.iloc[-1])
+    rolling_mean = df.rolling(window=60).mean().iloc[-1]  # 3-month average (assuming daily data)
+    rolling_std = df.rolling(window=60).std().iloc[-1]  # 3-month standard deviation
+    
+    # Create the figure
+    fig = go.Figure()
+    
+    # Add error bars (2 standard deviations)
+    fig.add_trace(go.Scatter(
+        x=df.columns,
+        y=rolling_mean,
         error_y=dict(
-            type="data",
-            array=2 * std_3m,      # ±2σ
-            symmetric=True,
-            thickness=3,
-            color="red"
+            type='data',
+            array=rolling_std * 2,
+            color='red',
+            thickness=1.5,
+            width=10
         ),
+        mode='markers',
+        marker=dict(
+            color='blue',
+            size=10,
+            symbol='circle'
+        ),
+        name='3-month Average'
+    ))
+    
+    # Add current values
+    fig.add_trace(go.Scatter(
+        x=df.columns,
+        y=current_values,
+        mode='markers',
+        marker=dict(
+            color='black',
+            size=10,
+            symbol='circle'
+        ),
+        name='Current Value'
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title='Asset Swap Spreads Analysis',
+        yaxis_title='Spread (bps)',
+        xaxis_title='Bonds',
+        showlegend=True,
+        template='plotly_white',
+        yaxis=dict(zeroline=True),
+        height=600,
+        width=800
     )
-)
+    
+    return fig
 
-# ── Spot (latest) spread level
-fig.add_trace(
-    go.Scatter(
-        x=bonds,
-        y=spot,
-        mode="markers",
-        name="Spot value",
-        marker_symbol="x",
-        marker_size=12,
-    )
-)
-
-fig.update_layout(
-    title="Asset‑swap spreads — Spot vs 3‑month average ± 2σ",
-    xaxis_title="Bond / Maturity",
-    yaxis_title="Spread (bp)",
-    template="simple_white",
-    showlegend=True,
-    legend=dict(x=0.01, y=0.99)
-)
-
+# Example usage:
+# Assuming your combined_df from the previous code
+fig = create_spread_analysis_chart(result_df)
 fig.show()
-```
+
