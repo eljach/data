@@ -25,12 +25,17 @@ def combine_asw_spreads(bonds: List[str], api_client) -> pd.DataFrame:
     return combined_df
 
 def create_spread_analysis_chart(df):
+    # Helper function to safely get last valid value
+    def last_valid(series):
+        valid_values = series.dropna()
+        return valid_values.iloc[-1] if not valid_values.empty else np.nan
+    
     # Get the last valid values for each metric
-    current_values = df.apply(lambda col: col.dropna().iloc[-1] if pd.isna(col.iloc[-1]) else col.iloc[-1])
+    current_values = df.apply(last_valid)
     
     # Calculate rolling statistics and get their last valid values
-    rolling_mean = df.rolling(window=60).mean().apply(lambda col: col.dropna().iloc[-1] if pd.isna(col.iloc[-1]) else col.iloc[-1])
-    rolling_std = df.rolling(window=60).std().apply(lambda col: col.dropna().iloc[-1] if pd.isna(col.iloc[-1]) else col.iloc[-1])
+    rolling_mean = df.rolling(window=60).mean().apply(last_valid)
+    rolling_std = df.rolling(window=60).std().apply(last_valid)
     
     # Create the figure
     fig = go.Figure()
@@ -86,3 +91,4 @@ def create_spread_analysis_chart(df):
 # Assuming your combined_df from the previous code
 fig = create_spread_analysis_chart(result_df)
 fig.show()
+
