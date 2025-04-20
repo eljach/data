@@ -1,41 +1,29 @@
-import pandas as pd
-from typing import List, Dict
 import plotly.graph_objects as go
 import numpy as np
-
-def combine_asw_spreads(bonds: List[str], api_client) -> pd.DataFrame:
-    # Dictionary to store individual dataframes
-    all_spreads = {}
-    
-    # Loop through each bond and fetch its ASW spread
-    for bond in bonds:
-        try:
-            # Get the DataFrame from the API
-            df = api_client.get_asw_spread(bond)
-            # Store the ASW spread column, using the bond name as the column name
-            all_spreads[bond] = df['asw_spread']  # Adjust column name if different
-        except Exception as e:
-            print(f"Error fetching data for bond {bond}: {e}")
-            continue
-    
-    # Combine all series into a single DataFrame
-    # outer join to keep all dates from all bonds
-    combined_df = pd.concat(all_spreads, axis=1)
-    
-    return combined_df
+import pandas as pd
 
 def create_spread_analysis_chart(df):
-    # Helper function to safely get last valid value
-    def last_valid(series):
-        valid_values = series.dropna()
-        return valid_values.iloc[-1] if not valid_values.empty else np.nan
+    current_values = []
+    rolling_means = []
+    rolling_stds = []
     
-    # Get the last valid values for each metric
-    current_values = df.apply(last_valid)
-    
-    # Calculate rolling statistics and get their last valid values
-    rolling_mean = df.rolling(window=60).mean().apply(last_valid)
-    rolling_std = df.rolling(window=60).std().apply(last_valid)
+    # Process each bond independently
+    for bond in df.columns:
+        # Get clean series for this bond
+        clean_series = df[bond].dropna()
+        
+        if not clean_series.empty:
+            # Calculate statistics for clean data
+            current_values.append(clean_series.iloc[-1])
+            rolling_mean = clean_series.rolling(window=60).mean().iloc[-1]
+            rolling_std = clean_series.rolling(window=60).std().iloc[-1]
+            rolling_means.append(rolling_mean)
+            rolling_stds.append(rolling_std)
+        else:
+            # Handle empty series
+            current_values.append(np.nan)
+            rolling_means.append(np.nan)
+            rolling_stds.append(np.nan)
     
     # Create the figure
     fig = go.Figure()
@@ -43,10 +31,10 @@ def create_spread_analysis_chart(df):
     # Add error bars (2 standard deviations)
     fig.add_trace(go.Scatter(
         x=df.columns,
-        y=rolling_mean,
+        y=rolling_means,
         error_y=dict(
             type='data',
-            array=rolling_std * 2,
+            array=[std * 2 for std in rolling_stds],
             color='red',
             thickness=1.5,
             width=10
@@ -86,9 +74,3 @@ def create_spread_analysis_chart(df):
     )
     
     return fig
-
-# Example usage:
-# Assuming your combined_df from the previous code
-fig = create_spread_analysis_chart(result_df)
-fig.show()
-
